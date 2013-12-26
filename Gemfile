@@ -6,4 +6,5 @@ platforms :rbx do
   gem 'psych'                    # if using yaml
   gem 'minitest'                 # if using minitest
   gem 'rubinius-developer_tools' # if using any of coverage, debugger, profiler
+  gem 'bunny', '> 0.9'
 end

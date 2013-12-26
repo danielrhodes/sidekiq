@@ -1,5 +1,6 @@
 require 'sidekiq'
 require 'sidekiq/actor'
+require 'bunny'
 
 module Sidekiq
   ##
@@ -11,6 +12,7 @@ module Sidekiq
     include Actor
 
     TIMEOUT = 1
+    SLEEP   = 0.01 #10ms
 
     def initialize(mgr, options)
       @down = nil
@@ -81,13 +83,31 @@ module Sidekiq
   class BasicFetch
     def initialize(options)
       @strictly_ordered_queues = !!options[:strict]
-      @queues = options[:queues].map { |q| "queue:#{q}" }
+      #@queues = options[:queues].map{|q| "queue:#{q}"}
+      @queues = options[:queues]
       @unique_queues = @queues.uniq
     end
 
     def retrieve_work
-      work = Sidekiq.redis { |conn| conn.brpop(*queues_cmd) }
-      UnitOfWork.new(*work) if work
+      time_waiting = 0.0
+      queues = @strictly_ordered_queues ? @unique_queues.dup : @queues.shuffle.uniq
+      
+      # This is not really the optimal configuration
+      Sidekiq.bunny do |channel|
+        begin
+          queues.each do |queue_name|
+            q = channel.queue(Sidekiq::canonical_queue_name(queue_name), :durable => true)
+            next if !q
+            delivery_info, properties, work = q.pop
+            return UnitOfWork.new(*[queue_name, work]) if work
+          end
+
+          sleep(Sidekiq::Fetcher::SLEEP)
+          time_waiting += Sidekiq::Fetcher::SLEEP
+        end until time_waiting > Sidekiq::Fetcher::TIMEOUT
+
+      end
+
     end
 
     # By leaving this as a class method, it can be pluggable and used by the Manager actor. Making it
@@ -96,17 +116,11 @@ module Sidekiq
       return if inprogress.empty?
 
       Sidekiq.logger.debug { "Re-queueing terminated jobs" }
-      jobs_to_requeue = {}
+
       inprogress.each do |unit_of_work|
-        jobs_to_requeue[unit_of_work.queue_name] ||= []
-        jobs_to_requeue[unit_of_work.queue_name] << unit_of_work.message
+        unit_of_work.requeue
       end
 
-      Sidekiq.redis do |conn|
-        jobs_to_requeue.each do |queue, jobs|
-          conn.rpush("queue:#{queue}", jobs)
-        end
-      end
       Sidekiq.logger.info("Pushed #{inprogress.size} messages back to Redis")
     rescue => ex
       Sidekiq.logger.warn("Failed to requeue #{inprogress.size} jobs: #{ex.message}")
@@ -122,8 +136,10 @@ module Sidekiq
       end
 
       def requeue
-        Sidekiq.redis do |conn|
-          conn.rpush("queue:#{queue_name}", message)
+        Sidekiq.bunny do |channel|
+          q = channel.queue(Sidekiq::canonical_queue_name(queue_name), :durable => true)
+          exch = channel.default_exchange
+          exch.publish(message, :routing_key => Sidekiq::canonical_queue_name(queue_name), :persistent => true)
         end
       end
     end

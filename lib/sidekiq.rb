@@ -63,7 +63,7 @@ module Sidekiq
 
   def self.redis(&block)
     raise ArgumentError, "requires a block" if !block
-    @redis ||= Sidekiq::RedisConnection.create(@hash || {})
+    @redis ||= Sidekiq::RedisConnection.create(@redis_hash || {})
     @redis.with(&block)
   end
 
@@ -71,10 +71,40 @@ module Sidekiq
     return @redis = hash if hash.is_a?(ConnectionPool)
 
     if hash.is_a?(Hash)
-      @hash = hash
+      @redis_hash = hash
     else
       raise ArgumentError, "redis= requires a Hash or ConnectionPool"
     end
+  end
+
+  def self.bunny(&block)
+
+    raise ArgumentError, "requires a block" if !block
+    @bunny ||= Bunny.new(@bunny_hash || {})
+    @bunny.start if !@bunny.connected?
+    @channel ||= @bunny.create_channel
+    yield @channel
+  end
+
+  def self.bunny=(hash)
+    return @bunny = hash if hash.is_a?(Bunny)
+    if hash.is_a?(Hash)
+      @bunny_hash = hash
+    else
+      raise ArgumentError, "bunny= requires a Hash or a Bunny connection"
+    end
+  end
+
+  def self.queue_prefix=(prefix)
+    @queue_prefix = prefix
+  end
+
+  def self.queue_prefix
+    @queue_prefix || "sidekiq.queue"
+  end
+
+  def self.canonical_queue_name(queue_name)
+    "#{Sidekiq.queue_prefix}.#{queue_name}"
   end
 
   def self.client_middleware

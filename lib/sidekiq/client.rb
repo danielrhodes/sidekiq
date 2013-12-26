@@ -1,5 +1,6 @@
 require 'securerandom'
 require 'sidekiq/middleware/chain'
+require 'bunny'
 
 module Sidekiq
   class Client
@@ -155,11 +156,22 @@ module Sidekiq
           end)
         else
           q = payloads.first['queue']
+
           to_push = payloads.map { |entry| Sidekiq.dump_json(entry) }
+
           _, pushed = conn.multi do
             conn.sadd('queues', q)
-            conn.lpush("queue:#{q}", to_push)
+#            conn.lpush("queue:#{q}", to_push)
           end
+
+          Sidekiq.bunny do |channel|
+            queue = channel.queue(Sidekiq::canonical_queue_name(q), :durable => true)
+            exch = channel.default_exchange
+            to_push.each do |push_obj|
+              exch.publish(push_obj, :routing_key => Sidekiq::canonical_queue_name(q), :persistent => true)
+            end
+          end
+
         end
       end
       pushed
