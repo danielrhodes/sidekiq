@@ -98,14 +98,13 @@ module Sidekiq
           queues.each do |queue_name|
             q = channel.queue(Sidekiq::canonical_queue_name(queue_name), :durable => true)
             next if !q
-            delivery_info, properties, work = q.pop
-            return UnitOfWork.new(*[queue_name, work]) if work
+            delivery_info, properties, work = q.pop({:ack => true})  
+            return UnitOfWork.new(*[queue_name, work, properties, delivery_info]) if work
           end
 
           sleep(Sidekiq::Fetcher::SLEEP)
           time_waiting += Sidekiq::Fetcher::SLEEP
         end until time_waiting > Sidekiq::Fetcher::TIMEOUT
-
       end
 
     end
@@ -126,9 +125,14 @@ module Sidekiq
       Sidekiq.logger.warn("Failed to requeue #{inprogress.size} jobs: #{ex.message}")
     end
 
-    UnitOfWork = Struct.new(:queue, :message) do
+    UnitOfWork = Struct.new(:queue, :message, :properties, :delivery_info) do
       def acknowledge
-        # nothing to do
+#        Sidekiq.logger.debug { delivery_info }
+        Sidekiq.logger.debug { properties }
+
+        Sidekiq.bunny do |channel|
+          channel.ack(delivery_info.delivery_tag, false)
+        end
       end
 
       def queue_name
@@ -137,9 +141,7 @@ module Sidekiq
 
       def requeue
         Sidekiq.bunny do |channel|
-          q = channel.queue(Sidekiq::canonical_queue_name(queue_name), :durable => true)
-          exch = channel.default_exchange
-          exch.publish(message, :routing_key => Sidekiq::canonical_queue_name(queue_name), :persistent => true)
+          channel.reject(delivery_info.delivery_tag, true)
         end
       end
     end

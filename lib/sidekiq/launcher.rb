@@ -18,7 +18,6 @@ module Sidekiq
 
     def initialize(options)
       @manager = Sidekiq::Manager.new_link options
-      @poller = Sidekiq::Scheduled::Poller.new_link
       @fetcher = Sidekiq::Fetcher.new_link @manager, options
       @manager.fetcher = @fetcher
       @done = false
@@ -35,7 +34,6 @@ module Sidekiq
     def run
       watchdog('Launcher#run') do
         manager.async.start
-        poller.async.poll(true)
       end
     end
 
@@ -44,7 +42,6 @@ module Sidekiq
         @done = true
         Sidekiq::Fetcher.done!
         fetcher.async.terminate if fetcher.alive?
-        poller.async.terminate if poller.alive?
 
         manager.async.stop(:shutdown => true, :timeout => @options[:timeout])
         manager.wait(:shutdown)

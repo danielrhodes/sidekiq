@@ -1,15 +1,10 @@
 class WorkController < ApplicationController
   def index
-    @count = rand(10000)
+    @count = rand(100)
     puts "Adding #{@count} jobs"
     @count.times do |x|
       HardWorker.perform_async('bubba', 0.01, x)
     end
-  end
-
-  def email
-    UserMailer.delay_for(30.seconds).greetings(Time.now)
-    render :text => 'enqueued'
   end
 
   def bulk

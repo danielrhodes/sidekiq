@@ -10,8 +10,8 @@ Gem::Specification.new do |gem|
 
   gem.executables   = ['sidekiq', 'sidekiqctl']
   gem.files         = `git ls-files | grep -Ev '^(myapp|examples)'`.split("\n")
-  gem.test_files    = `git ls-files -- test/*`.split("\n")
-  gem.name          = "sidekiq"
+  aem.test_files    = `git ls-files -- test/*`.split("\n")
+  gem.name          = "sidekiq-rabbitmq"
   gem.require_paths = ["lib"]
   gem.version       = Sidekiq::VERSION
   gem.add_dependency                  'redis', '>= 3.0.6'

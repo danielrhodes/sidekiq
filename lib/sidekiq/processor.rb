@@ -19,7 +19,6 @@ module Sidekiq
     def self.default_middleware
       Middleware::Chain.new do |m|
         m.add Middleware::Server::Logging
-        m.add Middleware::Server::RetryJobs
         m.add Middleware::Server::ActiveRecord
       end
     end

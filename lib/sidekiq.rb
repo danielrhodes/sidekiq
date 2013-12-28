@@ -20,6 +20,9 @@ module Sidekiq
     :environment => nil,
     :timeout => 8,
     :profile => false,
+    :scheduled_queue_name => "scheduled",
+    :retry_queue_name => "retry",
+    :queue_prefix => "sidekiq.queue"
   }
 
   def self.❨╯°□°❩╯︵┻━┻
@@ -78,11 +81,20 @@ module Sidekiq
   end
 
   def self.bunny(&block)
-
     raise ArgumentError, "requires a block" if !block
     @bunny ||= Bunny.new(@bunny_hash || {})
-    @bunny.start if !@bunny.connected?
-    @channel ||= @bunny.create_channel
+    new_connection = false
+    if !@bunny.connected?
+      new_connection = true
+      @bunny.start
+      #Sidekiq::Logging.logger.warn("NOT CONNECTED!!")
+#      @channel = @bunny.create_channel
+    end
+
+    if !@channel || @channel.closed? || new_connection
+      @channel = @bunny.create_channel
+    end
+
     yield @channel
   end
 
@@ -95,12 +107,8 @@ module Sidekiq
     end
   end
 
-  def self.queue_prefix=(prefix)
-    @queue_prefix = prefix
-  end
-
   def self.queue_prefix
-    @queue_prefix || "sidekiq.queue"
+    self.options[:queue_prefix]
   end
 
   def self.canonical_queue_name(queue_name)

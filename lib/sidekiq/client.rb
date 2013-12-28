@@ -121,27 +121,6 @@ module Sidekiq
       def enqueue_to(queue, klass, *args)
         klass.client_push('queue' => queue, 'class' => klass, 'args' => args)
       end
-
-      # Example usage:
-      #   Sidekiq::Client.enqueue_to_in(:queue_name, 3.minutes, MyWorker, 'foo', 1, :bat => 'bar')
-      #
-      def enqueue_to_in(queue, interval, klass, *args)
-        int = interval.to_f
-        now = Time.now.to_f
-        ts = (int < 1_000_000_000 ? now + int : int)
-
-        item = { 'class' => klass, 'args' => args, 'at' => ts, 'queue' => queue }
-        item.delete('at') if ts <= now
-
-        klass.client_push(item)
-      end
-
-      # Example usage:
-      #   Sidekiq::Client.enqueue_in(3.minutes, MyWorker, 'foo', 1, :bat => 'bar')
-      #
-      def enqueue_in(interval, klass, *args)
-        klass.perform_in(interval, *args)
-      end
     end
 
     private
@@ -149,29 +128,19 @@ module Sidekiq
     def raw_push(payloads)
       pushed = false
       Sidekiq.redis do |conn|
-        if payloads.first['at']
-          pushed = conn.zadd('schedule', payloads.map do |hash|
-            at = hash.delete('at').to_s
-            [at, Sidekiq.dump_json(hash)]
-          end)
-        else
-          q = payloads.first['queue']
+        q = payloads.first['queue']
 
-          to_push = payloads.map { |entry| Sidekiq.dump_json(entry) }
+        to_push = payloads.map { |entry| Sidekiq.dump_json(entry) }
 
-          _, pushed = conn.multi do
-            conn.sadd('queues', q)
-#            conn.lpush("queue:#{q}", to_push)
+        _, pushed = conn.multi do
+          conn.sadd('queues', q)
+        end
+
+        Sidekiq.bunny do |channel|
+          queue = channel.queue(Sidekiq::canonical_queue_name(q), :durable => true) 
+          to_push.each do |push_obj|
+            channel.default_exchange.publish(push_obj, :routing_key => Sidekiq::canonical_queue_name(q), :persistent => true)
           end
-
-          Sidekiq.bunny do |channel|
-            queue = channel.queue(Sidekiq::canonical_queue_name(q), :durable => true)
-            exch = channel.default_exchange
-            to_push.each do |push_obj|
-              exch.publish(push_obj, :routing_key => Sidekiq::canonical_queue_name(q), :persistent => true)
-            end
-          end
-
         end
       end
       pushed
